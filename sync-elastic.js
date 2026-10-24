@@ -1,62 +1,66 @@
+require('dotenv').config({ path: '.env.local' });
 const { Client } = require('pg');
 
-
-// PostgreSQL Connection
 const db = new Client({
-  user: 'keycloak',
-  host: 'localhost',
-  database: 'moviedb',
-  password: 'password',
-  port: 5432,
+  user: process.env.DB_USER ?? 'keycloak',
+  host: process.env.DB_HOST ?? 'localhost',
+  database: process.env.DB_NAME ?? 'moviedb',
+  password: process.env.DB_PASSWORD,
+  port: parseInt(process.env.DB_PORT ?? '5432', 10),
 });
 
-const ELASTIC_URL = 'http://localhost:9200';
+const ELASTIC_URL = process.env.ELASTICSEARCH_URL ?? 'http://localhost:9200';
 const INDEX_NAME = 'movies';
 
 async function syncToElasticSearch() {
   console.log("Connecting to PostgreSQL...");
   await db.connect();
-  
-  // 1. Fetch movies from PostgreSQL
+
   console.log("Fetching movies from database...");
   const res = await db.query('SELECT * FROM movies');
   const movies = res.rows;
-  
+
   console.log(`Found ${movies.length} movies. Syncing to ElasticSearch...`);
-  
-  // 2. Create ElasticSearch Index
-  try {
-    await fetch(`${ELASTIC_URL}/${INDEX_NAME}`, { method: 'PUT' });
-    console.log("Created ElasticSearch index 'movies'.");
-  } catch(e) {
-    console.log("Index might already exist.");
+
+  // Create index (ignore 400 if it already exists)
+  const createRes = await fetch(`${ELASTIC_URL}/${INDEX_NAME}`, { method: 'PUT' });
+  if (!createRes.ok && createRes.status !== 400) {
+    throw new Error(`Failed to create ES index: ${createRes.status}`);
   }
-  
-  // 3. Bulk Indexing
+
   let indexedCount = 0;
+  let failedCount = 0;
+
   for (const movie of movies) {
+    const doc = {
+      movie_id: movie.movie_id,
+      title: movie.title,
+      overview: movie.overview,
+      release_date: movie.release_date,
+      poster_path: movie.poster_path,
+      vote_average: movie.vote_average,
+    };
+
     try {
-      const doc = {
-        movie_id: movie.movie_id,
-        title: movie.title,
-        overview: movie.overview,
-        release_date: movie.release_date,
-        poster_path: movie.poster_path,
-        vote_average: movie.vote_average
-      };
-      
-      await fetch(`${ELASTIC_URL}/${INDEX_NAME}/_doc/${movie.movie_id}`, {
+      const indexRes = await fetch(`${ELASTIC_URL}/${INDEX_NAME}/_doc/${movie.movie_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(doc)
+        body: JSON.stringify(doc),
       });
-      indexedCount++;
+
+      if (!indexRes.ok) {
+        console.error(`Failed to index movie ${movie.movie_id}: HTTP ${indexRes.status}`);
+        failedCount++;
+      } else {
+        indexedCount++;
+      }
     } catch (e) {
-      console.error(`Failed to index movie ${movie.movie_id}`);
+      console.error(`Failed to index movie ${movie.movie_id}:`, e.message);
+      failedCount++;
     }
   }
-  
-  console.log(`✅ Successfully indexed ${indexedCount} movies into ElasticSearch!`);
+
+  console.log(`✅ Indexed ${indexedCount} movies. ${failedCount > 0 ? `❌ ${failedCount} failed.` : ''}`);
   await db.end();
 }
 

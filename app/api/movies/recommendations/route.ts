@@ -13,16 +13,16 @@ export async function GET(request: Request) {
     // Strategy 1: Collaborative Filtering
     // "Users who liked this movie (rated 7+) also liked..."
     const recommendations = await query(`
-      SELECT m.movie_id, m.title, m.poster_path, m.average_rating, COUNT(mi2.profile_id) as common_likes
+      SELECT m.movie_id, m.title, m.poster_path, m.vote_average, COUNT(mi2.profile_id) as common_likes
       FROM movie_interactions mi1
       JOIN movie_interactions mi2 ON mi1.profile_id = mi2.profile_id
       JOIN movies m ON mi2.movie_id = m.movie_id
-      WHERE mi1.movie_id = $1 
-        AND mi1.rating >= 7 
+      WHERE mi1.movie_id = $1
+        AND mi1.rating >= 7
         AND mi2.rating >= 7
         AND mi2.movie_id != $1
-      GROUP BY m.movie_id, m.title, m.poster_path, m.average_rating
-      ORDER BY common_likes DESC, m.average_rating DESC
+      GROUP BY m.movie_id, m.title, m.poster_path, m.vote_average
+      ORDER BY common_likes DESC, m.vote_average DESC
       LIMIT 5
     `, [movieId]);
 
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
                movie_id: m.id,
                title: m.title,
                poster_path: m.poster_path,
-               average_rating: m.vote_average
+               vote_average: m.vote_average
              }));
              return NextResponse.json({ type: 'tmdb', movies: tmdbMovies });
           }
@@ -53,9 +53,8 @@ export async function GET(request: Request) {
     }
 
     // Strategy 3: "Cold Start" Local Fallback
-    // If no one has rated this movie yet, just show the global top-rated movies
     const fallback = await query(`
-      SELECT movie_id, title, poster_path, average_rating
+      SELECT movie_id, title, poster_path, vote_average
       FROM movies
       WHERE movie_id != $1
       ORDER BY vote_average DESC NULLS LAST
