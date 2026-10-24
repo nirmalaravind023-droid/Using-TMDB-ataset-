@@ -20,29 +20,39 @@ export async function GET(request: Request) {
       const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second fail-fast timeout
 
       const esUrl = process.env.ELASTICSEARCH_URL ?? 'http://localhost:9200';
-      const esRes = await fetch(`${esUrl}/movies/_search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          query: {
-            bool: {
-              should: [
-                { match_phrase: { title: { query: searchTerm, boost: 5 } } },
-                { match: { title: { query: searchTerm, fuzziness: 'AUTO' } } }
-              ]
-            }
-          },
-          size: 20
-        })
-      });
-      clearTimeout(timeoutId);
-
-      if (!esRes.ok) {
-        throw new Error(`Elasticsearch returned ${esRes.status}`);
+      try {
+        const esRes = await fetch(`${esUrl}/movies/_search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            query: {
+              bool: {
+                should: [
+                  { match_phrase: { title: { query: searchTerm, boost: 5 } } },
+                  { match: { title: { query: searchTerm, fuzziness: 'AUTO' } } }
+                ]
+              }
+            },
+            size: 20
+          })
+        });
+        if (!esRes.ok) {
+          throw new Error(`Elasticsearch returned ${esRes.status}`);
+        }
+        const esData = await esRes.json();
+        movies = esData.hits.hits.map((h: any) => ({ ...h._source, type: 'movie' }));
+        if (movies.length === 0) {
+          const pgResults = await query(
+            `SELECT *, CASE WHEN title = $1 THEN 1 WHEN title ILIKE $1 THEN 2 WHEN title ILIKE $2 THEN 3 ELSE 4 END as priority
+             FROM movies WHERE title ILIKE $2 ORDER BY priority ASC, vote_average DESC NULLS LAST LIMIT 20`,
+            [searchTerm, `%${searchTerm}%`]
+          );
+          movies = pgResults.rows.map(r => ({ ...r, type: 'movie' }));
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
-      const esData = await esRes.json();
-      movies = esData.hits.hits.map((h: any) => ({ ...h._source, type: 'movie' }));
     } catch (e) {
       // Postgres Fallback with Exact Match Priority
       const pgResults = await query(
@@ -76,6 +86,10 @@ export async function GET(request: Request) {
             type: 'movie',
             is_regional: ['kn', 'ta', 'te', 'ml'].includes(m.original_language)
           })) || [];
+       } else if (tmdbRegionalRes.status === 401) {
+          console.error('TMDB API key invalid or missing');
+       } else if (tmdbRegionalRes.status === 429) {
+          console.warn('TMDB rate limit hit; skipping regional results');
        }
     } catch(e) {}
 
@@ -92,6 +106,10 @@ export async function GET(request: Request) {
           known_for: p.known_for_department,
           type: 'person'
         })) || [];
+      } else if (personRes.status === 401) {
+        console.error('TMDB API key invalid or missing');
+      } else if (personRes.status === 429) {
+        console.warn('TMDB rate limit hit; skipping people results');
       }
     } catch (e) {}
 
