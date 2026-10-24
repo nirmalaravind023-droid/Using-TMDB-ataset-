@@ -37,10 +37,11 @@ export async function GET(request: Request) {
       });
       clearTimeout(timeoutId);
 
-      if (esRes.ok) {
-        const esData = await esRes.json();
-        movies = esData.hits.hits.map((h: any) => ({ ...h._source, type: 'movie' }));
+      if (!esRes.ok) {
+        throw new Error(`Elasticsearch returned ${esRes.status}`);
       }
+      const esData = await esRes.json();
+      movies = esData.hits.hits.map((h: any) => ({ ...h._source, type: 'movie' }));
     } catch (e) {
       // Postgres Fallback with Exact Match Priority
       const pgResults = await query(

@@ -1,6 +1,6 @@
-# 🎬 moviePortal - Enterprise Architecture Guide
+# 🎬 moviePortal
 
-Welcome to the **moviePortal** project! This is a production-ready, highly scalable movie discovery platform built with an Enterprise-grade tech stack.
+A movie discovery platform built with Next.js 14, PostgreSQL, and Elasticsearch for typo-tolerant search.
 
 ---
 
@@ -49,11 +49,12 @@ node sync-tmdb.js
 ```
 *This will fetch trending movies, cast members, and trailers.*
 
-### 4. Sync Elasticsearch (Optional)
-To enable advanced search, push the database records to Elasticsearch:
+### 4. Index into Elasticsearch (manual batch — run once after seeding)
+Search falls back to PostgreSQL automatically when Elasticsearch is unavailable. To enable typo-tolerant search, run this after the database is populated:
 ```bash
 node sync-elastic.js
 ```
+This is a one-shot script, not a continuous sync. Re-run it whenever you add a large batch of new movies.
 
 ### 5. Start the Web App
 Run the development server:
