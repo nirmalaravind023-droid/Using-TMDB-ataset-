@@ -12,15 +12,16 @@ import { query } from '@/lib/db';
 
 const mockQuery = query as jest.MockedFunction<typeof query>;
 
-// Extract the core search logic to test independently
+// Extract the core search logic to test independently (mirrors production route)
 async function searchMovies(
   searchTerm: string,
   fetchImpl: typeof fetch
 ): Promise<{ movies: any[]; people: any[] }> {
   let movies: any[] = [];
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000);
   try {
-    const controller = new AbortController();
     const esRes = await fetchImpl(`http://localhost:9200/movies/_search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -34,12 +35,22 @@ async function searchMovies(
 
     const esData = await esRes.json();
     movies = esData.hits.hits.map((h: any) => ({ ...h._source, type: 'movie' }));
+
+    if (movies.length === 0) {
+      const pgResults = await mockQuery(
+        'SELECT * FROM movies WHERE title ILIKE $1 LIMIT 20',
+        [`%${searchTerm}%`]
+      );
+      movies = (pgResults as any).rows.map((r: any) => ({ ...r, type: 'movie' }));
+    }
   } catch {
     const pgResults = await mockQuery(
       'SELECT * FROM movies WHERE title ILIKE $1 LIMIT 20',
       [`%${searchTerm}%`]
     );
     movies = (pgResults as any).rows.map((r: any) => ({ ...r, type: 'movie' }));
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   return { movies, people: [] };
@@ -107,5 +118,19 @@ describe('movie search – Elasticsearch fallback', () => {
     const result = await searchMovies('test', mockFetch);
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to Postgres when ES returns empty hits', async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ hits: { hits: [] } }),
+    }) as unknown as typeof fetch;
+
+    const result = await searchMovies('inception', mockFetch);
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(result.movies).toHaveLength(1);
+    expect(result.movies[0].title).toBe('Inception');
   });
 });
