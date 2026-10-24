@@ -19,7 +19,8 @@ export async function GET(request: Request) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second fail-fast timeout
 
-      const esRes = await fetch(`http://localhost:9200/movies/_search`, {
+      const esUrl = process.env.ELASTICSEARCH_URL ?? 'http://localhost:9200';
+      const esRes = await fetch(`${esUrl}/movies/_search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
